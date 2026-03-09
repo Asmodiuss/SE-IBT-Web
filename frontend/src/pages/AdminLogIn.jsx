@@ -4,84 +4,315 @@ import LOGO from "../assets/LOGO.png";
 import LoginBackground from "../components/login/LoginBackground";
 import LoginCard from "../components/login/LoginCard";
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:10000";
+
+const roleNames = {
+  superadmin: "Super Admin",
+  parking: "Parking Admin",
+  lostfound: "Lost & Found Admin",
+  ticket: "Ticket Admin",
+  bus: "Bus Admin",
+  lease: "Lease Admin",
+};
+
 export default function AdminLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
+  
+  const [step, setStep] = useState("LOGIN");
+  const [showResetButton, setShowResetButton] = useState(false);
+  
+  const [resetToken, setResetToken] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  
   const navigate = useNavigate();
 
   useEffect(() => {
     document.title = "Login";
   }, []);
 
-  const handleSubmit = (e) => {
+  // --- LOGIN HANDLER ---
+  const handleCredentialsSubmit = async (e) => {
+    if (e) e.preventDefault();
+    if (!email || !password) return setError("Please enter your email and password.");
+    
+    setError("");
+    setSuccessMsg("");
+    setIsLoading(true);
+    setShowResetButton(false);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admins/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.message || "Invalid credentials.");
+        if (data.showReset) setShowResetButton(true);
+        return;
+      }
+
+      if (data.requiresOtp) {
+        setStep("2FA_OTP");
+        setOtp("");
+      } else {
+        setError("Unexpected response from server.");
+      }
+    } catch (err) {
+      console.error("Login error:", err);
+      setError("Login system error. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // --- 2FA OTP HANDLER ---
+  const handle2FAOtpSubmit = async (e) => {
     e.preventDefault();
+    const cleanedOtp = String(otp || "").trim();
+    if (!cleanedOtp) return setError("Please enter the OTP.");
+    
     setError("");
     setIsLoading(true);
 
-    setTimeout(() => {
-      try {
-        const key = "ibt_admins";
-        const raw = localStorage.getItem(key);
-        if (!raw) {
-          localStorage.setItem(key, JSON.stringify([
-            { id: 1, email: "admin@example.com", password: "admin123", role: "superadmin" },
-            { id: 2, email: "parkingadmin@example.com", password: "parking123", role: "parking" },
-            { id: 3, email: "lostfoundadmin@example.com", password: "lostfound123", role: "lostfound" },
-            { id: 4, email: "ticketadmin@example.com", password: "ticket123", role: "ticket" },
-            { id: 5, email: "busadmin@example.com", password: "bus123", role: "bus" },
-            { id: 6, email: "leaseadmin@example.com", password: "lease123", role: "lease" },
-          ]));
-        }
-      } catch { }
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admins/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, otp: cleanedOtp }),
+      });
+      const data = await res.json();
 
-      try {
-        const admins = JSON.parse(localStorage.getItem("ibt_admins")) || [];
-        const found = admins.find((a) => a.email === email && a.password === password);
-        if (found) {
-          localStorage.setItem("isAdminLoggedIn", "true");
-          localStorage.setItem("authRole", found.role);
-          navigate(found.role === "parking" ? "/parking" : 
-            found.role === "lostfound" ? "/lost-found" : 
-            found.role === "bus" ? "/buses-trips" :
-            found.role === "ticket" ? "/tickets" :
-            found.role === "lease" ? "/tenant-lease" : "/dashboard");
-        } else {
-          setError("Invalid credentials. Please try again.");
-        }
-      } catch {
-        setError("Login system error. Please try again.");
-      }
+      if (!res.ok) return setError(data.message || "Failed to verify OTP.");
+
+      const { admin } = data;
+      const role = admin.role;
+      const name = admin.name || roleNames[role] || "Admin";
+
+      localStorage.setItem("isAdminLoggedIn", "true");
+      localStorage.setItem("authRole", role);
+      localStorage.setItem("authName", name);
+      localStorage.setItem("authEmail", admin.email);
+
+      const routes = { parking: "/parking", lostfound: "/lost-found", bus: "/buses-trips", ticket: "/tickets", lease: "/tenant-lease" };
+      navigate(routes[role] || "/dashboard");
+
+    } catch (err) {
+      console.error("OTP error:", err);
+      setError("Failed to verify OTP.");
+    } finally {
       setIsLoading(false);
-    }, 1500);
+    }
+  };
+
+  // --- FORGOT PASSWORD ---
+  const handleForgotPasswordTrigger = async () => {
+    setError("");
+    setSuccessMsg("");
+    setIsLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admins/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) return setError(data.message || "Failed to trigger reset.");
+      
+      setSuccessMsg("Reset code sent to your email.");
+      setStep("FORGOT_OTP");
+      setOtp("");
+    } catch (err) {
+      setError("System error. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // --- VERIFY RESET OTP ---
+  const handleResetOtpSubmit = async (e) => {
+    e.preventDefault();
+    const cleanedOtp = String(otp || "").trim();
+    if (!cleanedOtp) return setError("Please enter the reset code.");
+    
+    setError("");
+    setSuccessMsg("");
+    setIsLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admins/verify-reset-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, otp: cleanedOtp }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) return setError(data.message || "Invalid or expired OTP.");
+
+      setResetToken(data.resetToken);
+      setSuccessMsg("OTP Verified. Please enter your new password.");
+      setStep("RESET_PASSWORD");
+      setOtp("");
+    } catch (err) {
+      setError("Failed to verify reset code.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // --- PASSWORD RESET ---
+  const handleNewPasswordSubmit = async (e) => {
+    e.preventDefault();
+    if (!newPassword) return setError("Please enter a new password.");
+    
+    setError("");
+    setIsLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admins/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, resetToken, newPassword }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) return setError(data.message || "Failed to reset password.");
+
+      setSuccessMsg("Password updated successfully! You can now log in.");
+      setStep("LOGIN");
+      setPassword("");
+      setNewPassword("");
+      setShowResetButton(false);
+    } catch (err) {
+      setError("Failed to reset password.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // --- UTILS ---
+  const handleBackToLogin = () => {
+    setStep("LOGIN");
+    setOtp("");
+    setNewPassword("");
+    setError("");
+    setSuccessMsg("");
+  };
+
+  const handleResendOtp = async () => {
+    handleCredentialsSubmit();
+    setSuccessMsg("A new OTP has been sent to your email.");
+  };
+
+  const getSubmitHandler = () => {
+    if (step === "LOGIN") return handleCredentialsSubmit;
+    if (step === "2FA_OTP") return handle2FAOtpSubmit;
+    if (step === "FORGOT_OTP") return handleResetOtpSubmit;
+    if (step === "RESET_PASSWORD") return handleNewPasswordSubmit;
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-emerald-900 to-slate-900 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
       <LoginBackground />
-      <form onSubmit={handleSubmit}>
-        <LoginCard 
-          icon={
-            <img 
-              src={LOGO} 
-              alt="Logo" 
-              className="w-full h-full object-contain" 
-            />
-          }
-          title="Admin Portal"
-          subtitle="Sign in to access your dashboard"
-          email={email}
-          setEmail={setEmail}
-          password={password}
-          setPassword={setPassword}
-          showPassword={showPassword}
-          setShowPassword={setShowPassword}
-          handleSubmit={handleSubmit}
-          isLoading={isLoading}
-          error={error}
-        />
+      <form onSubmit={getSubmitHandler()} className="z-10 relative">
+        
+        {step === "LOGIN" && (
+          <LoginCard 
+            icon={<img src={LOGO} alt="Logo" className="w-full h-full object-contain" />}
+            title="Admin Portal"
+            subtitle={successMsg || "Sign in to access your dashboard"}
+            email={email} setEmail={setEmail}
+            password={password} setPassword={setPassword}
+            showPassword={showPassword} setShowPassword={setShowPassword}
+            handleSubmit={handleCredentialsSubmit}
+            isLoading={isLoading}
+            error={error}
+            buttonText="Continue"
+            footer={
+              showResetButton && (
+                <div className="flex justify-center pt-2">
+                  <button 
+                    type="button" 
+                    onClick={handleForgotPasswordTrigger} 
+                    disabled={isLoading} 
+                    className="text-sm font-semibold text-emerald-500 hover:text-emerald-400 transition-colors"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
+              )
+            }
+          />
+        )}
+
+        {step === "2FA_OTP" && (
+          <LoginCard 
+            icon={<img src={LOGO} alt="Logo" className="w-full h-full object-contain" />}
+            title="OTP Verification" 
+            subtitle={successMsg || "Enter the OTP sent to your email to complete login"}
+            email={email} setEmail={setEmail} emailDisabled={true}
+            password={otp} setPassword={setOtp} passwordType="text"
+            passwordLabel="One-time password (OTP)" passwordPlaceholder="Enter 6-digit code" passwordIcon="Key"
+            showPassword={false} setShowPassword={() => {}} showPasswordToggle={false}
+            handleSubmit={handle2FAOtpSubmit} isLoading={isLoading} error={error}
+            buttonText="Verify OTP"
+            footer={
+              <div className="flex items-center justify-between pt-2">
+                <button type="button" onClick={handleBackToLogin} disabled={isLoading} className="text-sm font-semibold text-slate-400 hover:text-white transition-colors">Back</button>
+                <button type="button" onClick={handleResendOtp} disabled={isLoading} className="text-sm font-semibold text-emerald-500 hover:text-emerald-400 transition-colors">Resend OTP</button>
+              </div>
+            }
+          />
+        )}
+
+        {step === "FORGOT_OTP" && (
+          <LoginCard 
+            icon={<img src={LOGO} alt="Logo" className="w-full h-full object-contain" />}
+            title="Password Reset" 
+            subtitle={successMsg || "Enter the 6-digit code sent to your email"}
+            email={email} setEmail={setEmail} emailDisabled={true}
+            password={otp} setPassword={setOtp} passwordType="text"
+            passwordLabel="Reset Code (OTP)" passwordPlaceholder="Enter 6-digit code" passwordIcon="Key"
+            showPassword={false} setShowPassword={() => {}} showPasswordToggle={false}
+            handleSubmit={handleResetOtpSubmit} isLoading={isLoading} error={error}
+            buttonText="Verify Code"
+            footer={
+              <div className="flex items-center justify-between pt-2">
+                <button type="button" onClick={handleBackToLogin} disabled={isLoading} className="text-sm font-semibold text-slate-400 hover:text-white transition-colors">Back to Login</button>
+                <button type="button" onClick={handleForgotPasswordTrigger} disabled={isLoading} className="text-sm font-semibold text-emerald-500 hover:text-emerald-400 transition-colors">Resend Code</button>
+              </div>
+            }
+          />
+        )}
+
+        {step === "RESET_PASSWORD" && (
+          <LoginCard 
+            icon={<img src={LOGO} alt="Logo" className="w-full h-full object-contain" />}
+            title="Create New Password" 
+            subtitle={successMsg || "Your OTP was verified. Please enter a new password."}
+            email={email} setEmail={setEmail} emailDisabled={true}
+            password={newPassword} setPassword={setNewPassword}
+            passwordLabel="New Password" passwordPlaceholder="Enter new password"
+            showPassword={showPassword} setShowPassword={setShowPassword}
+            handleSubmit={handleNewPasswordSubmit} isLoading={isLoading} error={error}
+            buttonText="Update Password"
+            footer={
+              <div className="flex justify-center pt-2">
+                <button type="button" onClick={handleBackToLogin} disabled={isLoading} className="text-sm font-semibold text-slate-400 hover:text-white transition-colors">Cancel</button>
+              </div>
+            }
+          />
+        )}
+
       </form>
     </div>
   );

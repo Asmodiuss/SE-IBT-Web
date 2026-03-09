@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import Counter from "./Counter.js";
 
 const terminalFeeSchema = new mongoose.Schema({
   ticketNo: {
@@ -9,7 +10,7 @@ const terminalFeeSchema = new mongoose.Schema({
   passengerType: {
     type: String,
     required: true,
-    enum: ["Regular", "Student", "Senior Citizen / PWD"]
+    enum: ["Regular", "Student", "Senior Citizen / PWD", "Student/Senior/PWD"]
   },
   price: {
     type: Number,
@@ -26,8 +27,43 @@ const terminalFeeSchema = new mongoose.Schema({
   status: {
     type: String,
     default: "Active"
+  },
+  isArchived: { 
+    type: Boolean, 
+    default: false 
   }
 }, { timestamps: true });
 
-const TerminalFee = mongoose.model("TerminalFee", terminalFeeSchema);
-export default TerminalFee;
+terminalFeeSchema.pre("save", async function (next) {
+  if (this.isNew) {
+    try {
+      let counter = await Counter.findOneAndUpdate(
+        { id: "ticketNo" },
+        { $inc: { seq: 1 } },
+        { new: true }
+      );
+      if (!counter) {
+        const result = await mongoose.model("TerminalFee").aggregate([
+          { $addFields: { numericTicketNo: { $toInt: "$ticketNo" } } },
+          { $sort: { numericTicketNo: -1 } },
+          { $limit: 1 }
+        ]);
+        
+        const maxTicket = result.length > 0 && result[0].numericTicketNo ? result[0].numericTicketNo : 0;
+        
+        counter = await Counter.create({ 
+          id: "ticketNo", 
+          seq: maxTicket + 1 
+        });
+      }
+      this.ticketNo = counter.seq.toString();
+      next();
+    } catch (error) {
+      return next(error);
+    }
+  } else {
+    next();
+  }
+});
+
+export default mongoose.model("TerminalFee", terminalFeeSchema);

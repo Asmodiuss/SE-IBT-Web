@@ -1,6 +1,5 @@
 import Report from '../models/Report.js';
 
-// CREATE
 export const createReport = async (req, res) => {
   try {
     const { type, data, author, status } = req.body;
@@ -19,17 +18,54 @@ export const createReport = async (req, res) => {
   }
 };
 
-// GET ALL
 export const getAllReports = async (req, res) => {
   try {
-    const reports = await Report.find().sort({ createdAt: -1 });
+    const reports = await Report.find({ isArchived: { $ne: true } }).sort({ createdAt: -1 });
     res.status(200).json(reports);
   } catch (error) {
     res.status(500).json({ message: "Error fetching reports", error: error.message });
   }
 };
 
-// GET SPECIFIC REPORT
+// --- SOFT DELETE FUNCTIONS (Archive & Restore) ---
+
+export const archiveReport = async (req, res) => {
+  try {
+    const archived = await Report.findByIdAndUpdate(
+      req.params.id,
+      { isArchived: true },
+      { new: true }
+    );
+    if (!archived) return res.status(404).json({ message: "Report not found" });
+    res.status(200).json({ message: "Report archived successfully", report: archived });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const restoreReport = async (req, res) => {
+  try {
+    const restored = await Report.findByIdAndUpdate(
+      req.params.id,
+      { isArchived: false },
+      { new: true }
+    );
+    if (!restored) return res.status(404).json({ message: "Report not found" });
+    res.status(200).json({ message: "Report restored successfully", report: restored });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const getArchivedReports = async (req, res) => {
+  try {
+    const reports = await Report.find({ isArchived: true }).sort({ updatedAt: -1 });
+    res.status(200).json(reports);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 export const getReportById = async (req, res) => {
   try {
     const report = await Report.findById(req.params.id);
@@ -40,11 +76,10 @@ export const getReportById = async (req, res) => {
   }
 };
 
-// DELETE
 export const deleteReport = async (req, res) => {
     try {
         await Report.findByIdAndDelete(req.params.id);
-        res.status(200).json({ message: "Report deleted" });
+        res.status(200).json({ message: "Report permanently deleted" });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

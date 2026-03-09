@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from "react";
-import { X, Upload, FileText, Calendar, PhilippinePeso, Map, Check, Eye, Loader2, ZoomIn } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { X, Upload, FileText, Calendar, PhilippinePeso, Map, Check, Loader2, ZoomIn } from "lucide-react";
 
-const CLOUDINARY_URL = "https://api.cloudinary.com/v1_1/dqgt2uxfe/auto/upload";
-const UPLOAD_PRESET = "ibt_upload";
+import CryptoJS from "crypto-js";
 
-const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = null }) => {
+
+const SECRET_KEY = import.meta.env.VITE_ENCRYPTION_KEY; 
+
+const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = null, activeTab = "permanent", defaultNightPrice = 1120, defaultPermanentPrice = 6000 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [formData, setFormData] = useState({
@@ -12,21 +14,46 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
     firstName: "", 
     middleName: "",
     lastName: "",
+    suffix: "",
     referenceNo: "", 
     email: "",
     contactNo: "",
     tenantType: "Permanent", 
     _id: "",
+    uid: "",
   });
 
   const [showMapModal, setShowMapModal] = useState(false);
   const [tempSelectedSlots, setTempSelectedSlots] = useState([]); 
 
-  const [productCategory, setProductCategory] = useState("Food and Beverages");
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (showMapModal && formData.tenantType === 'Night Market' && scrollRef.current) {
+      setTimeout(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+        }
+      }, 50);
+    }
+  }, [showMapModal, formData.tenantType]);
+
+  const [productCategory, setProductCategory] = useState("food_non_alcoholic");
   const [otherProductDetails, setOtherProductDetails] = useState("");
 
   const [rentAmount, setRentAmount] = useState(0);
   const [utilityAmount, setUtilityAmount] = useState(0);
+
+  const [feeBreakdown, setFeeBreakdown] = useState({
+    garbageFee: 0,
+    permitFee: 0,
+    businessTaxes: 0,
+    electricity: 0,
+    water: 0,
+    otherAmount: 0,
+    otherSpecify: ""
+  });
+
   const [totalAmount, setTotalAmount] = useState(0);
 
   const [startDate, setStartDate] = useState("");
@@ -53,8 +80,13 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
 
       if (initialData) {
         const fullName = initialData.name || initialData.tenantName || "";
-        const nameParts = fullName.split(" ");
-        let fName = "", mName = "", lName = "";
+        let nameParts = fullName.trim().split(/\s+/);
+        let fName = "", mName = "", lName = "", parsedSuffix = "";
+
+        const suffixList = ["jr", "jr.", "sr", "sr.", "ii", "iii", "iv", "v"];
+        if (nameParts.length > 1 && suffixList.includes(nameParts[nameParts.length - 1].toLowerCase())) {
+            parsedSuffix = nameParts.pop(); 
+        }
 
         if (nameParts.length === 1) {
             fName = nameParts[0];
@@ -63,8 +95,8 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
             lName = nameParts[1];
         } else if (nameParts.length > 2) {
             fName = nameParts[0];
-            lName = nameParts[nameParts.length - 1];
-            mName = nameParts.slice(1, -1).join(" ");
+            lName = nameParts.pop(); 
+            mName = nameParts.slice(1).join(" "); 
         }
 
         setFormData({
@@ -73,67 +105,56 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
           firstName: fName,
           middleName: mName,
           lastName: lName,
+          suffix: parsedSuffix || initialData.suffix || "", 
           email: initialData.email || "",
           contactNo: initialData.contactNo || "",
           tenantType: initialData.tenantType || "Permanent", 
           _id: initialData._id || "",
+          uid: initialData.uid || "",
         });
 
-        if (initialData.slotNo) {
-            setTempSelectedSlots(initialData.slotNo.split(', '));
-        }
-
-        // DOCUMENT LOADER
-        if (initialData.documents) {
-            setDocuments({
-                businessPermit: initialData.documents.businessPermit || null,
-                validID: initialData.documents.validID || null,
-                barangayClearance: initialData.documents.barangayClearance || null,
-                proofOfReceipt: initialData.documents.proofOfReceipt || null,
-                contract: initialData.documents.contract || null,
-            });
-        }
-
-        const incomingProduct = initialData.products || "Food and Beverages";
-        if (["Food and Beverages", "Clothing"].includes(incomingProduct)) {
-          setProductCategory(incomingProduct);
-          setOtherProductDetails("");
-        } else {
-          setProductCategory("Other");
-          setOtherProductDetails(incomingProduct);
-        }
-
-      } else {
+        setProductCategory("food_non_alcoholic");
+        setOtherProductDetails("");
+        setDocuments({
+            businessPermit: null, validID: null, barangayClearance: null, proofOfReceipt: null, contract: null,
+            communityTax: null, policeClearance: null 
+        });
+        setTempSelectedSlots([]); 
+      }
+      
+      else {
         setFormData({
             slotNo: "",
             firstName: "",
             middleName: "",
             lastName: "",
+            suffix: "", 
             referenceNo: generateRef(), 
             email: "",
             contactNo: "",
-            tenantType: "Permanent", 
-            _id: "", 
+            tenantType: activeTab === "night" ? "Night Market" : "Permanent", 
+            _id: "",
+            uid: "",
         });
-        setProductCategory("Food and Beverages");
+        setProductCategory("food_non_alcoholic");
         setOtherProductDetails("");
         setDocuments({
-            businessPermit: null,
-            validID: null,
-            barangayClearance: null,
-            proofOfReceipt: null,
-            contract: null,
+            businessPermit: null, validID: null, barangayClearance: null, proofOfReceipt: null, contract: null,
+            communityTax: null, policeClearance: null 
         });
         setTempSelectedSlots([]); 
       }
 
       setStartDate(formatDateTimeForInput(new Date()));
       setUtilityAmount(0);
+        setFeeBreakdown({
+          garbageFee: 0, permitFee: 0, businessTaxes: 0, 
+          electricity: 0, water: 0, otherAmount: 0, otherSpecify: ""
+        });
       setIsSubmitting(false);
     }
   }, [isOpen, initialData]); 
 
-  // MAPPER
   useEffect(() => {
     if (showMapModal) {
       const currentSlots = formData.slotNo ? formData.slotNo.split(', ') : [];
@@ -141,7 +162,6 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
     }
   }, [showMapModal, formData.slotNo]);
 
-  // CALCULATIONS
   useEffect(() => {
     let baseRent = 0;
     let calculatedDueDate = "";
@@ -149,14 +169,14 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
     const slotCount = formData.slotNo ? formData.slotNo.split(',').length : 1;
 
     if (formData.tenantType === "Permanent") {
-      baseRent = 6000;
+      baseRent = defaultPermanentPrice; 
       if (startDate) {
         const d = new Date(startDate);
         d.setMonth(d.getMonth() + 1); 
         calculatedDueDate = formatDateTimeForInput(d);
       }
     } else {
-      baseRent = 160 * 7; 
+      baseRent = defaultNightPrice; 
       if (startDate) {
         const d = new Date(startDate);
         d.setDate(d.getDate() + 7); 
@@ -167,11 +187,19 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
     setRentAmount(baseRent * slotCount);
     setDueDate(calculatedDueDate);
 
-  }, [formData.tenantType, startDate, formData.slotNo]); 
+  }, [formData.tenantType, startDate, formData.slotNo, defaultNightPrice, defaultPermanentPrice]);
 
   useEffect(() => {
-    setTotalAmount(parseFloat(rentAmount || 0) + parseFloat(utilityAmount || 0));
-  }, [rentAmount, utilityAmount]);
+    const calculatedUtils = (parseFloat(feeBreakdown.garbageFee) || 0) +
+                  (parseFloat(feeBreakdown.permitFee) || 0) +
+                  (parseFloat(feeBreakdown.businessTaxes) || 0) +
+                  (parseFloat(feeBreakdown.electricity) || 0) +
+                  (parseFloat(feeBreakdown.water) || 0) +
+                  (parseFloat(feeBreakdown.otherAmount) || 0);
+                  
+    setUtilityAmount(calculatedUtils);
+    setTotalAmount(parseFloat(rentAmount || 0) + calculatedUtils);
+  }, [rentAmount, feeBreakdown]);
 
   const handleFileChange = (e, docType) => {
     if (e.target.files && e.target.files[0]) {
@@ -179,25 +207,28 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
     }
   };
 
-  const uploadToCloudinary = async (file) => {
-    const data = new FormData();
-    data.append("file", file);
-    data.append("upload_preset", UPLOAD_PRESET);
-  
-    try {
-      const res = await fetch(CLOUDINARY_URL, { 
-      method: "POST",
-      body: data,
-      });
-      const result = await res.json();
-      return result.secure_url;
-    } catch (error) {
-      console.error("Upload failed", error);
-      return null;
-    }
+  const encryptFile = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const base64Data = e.target.result; 
+          
+          const pureBase64 = base64Data.split(',')[1]; 
+
+          const encrypted = CryptoJS.AES.encrypt(pureBase64, SECRET_KEY).toString();
+          
+          const blob = new Blob([encrypted], { type: 'application/octet-stream' });
+          resolve(blob);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   };
 
-  // SUBMIT
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -212,43 +243,36 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
             }).replace(',', ''); 
         };
 
-        const processedDocuments = { ...documents };
-        if (formData.tenantType !== "Permanent") {
-            delete processedDocuments.contract;
-        }
+        const { _id, firstName, middleName, lastName, suffix, ...restOfFormData } = formData;
+        const combinedName = `${firstName} ${middleName} ${lastName} ${suffix || ''}`.replace(/\s+/g, ' ').trim();
 
-        for (const key of Object.keys(processedDocuments)) {
-            const file = processedDocuments[key];
-            if (!file) continue;
-
-            if (typeof file === 'object' && file instanceof File) {
-                const url = await uploadToCloudinary(file);
-                if (url) processedDocuments[key] = url;
-                else delete processedDocuments[key]; 
-            } 
-            else if (typeof file === 'string' && file.startsWith('data:')) {
-                const url = await uploadToCloudinary(file);
-                if (url) processedDocuments[key] = url;
-                else delete processedDocuments[key];
-            }
-        }
-
-        const { _id, firstName, middleName, lastName, ...restOfFormData } = formData;
+        const processedDocs = { ...documents };
         
-        const combinedName = `${firstName} ${middleName} ${lastName}`.replace(/\s+/g, ' ').trim();
+        for (const key of Object.keys(processedDocs)) {
+          const file = processedDocs[key];
+          if (file && typeof file !== 'string') {
+       
+            const encryptedBlob = await encryptFile(file);
+        
+            processedDocs[key] = new File([encryptedBlob], file.name, {
+              type: 'application/octet-stream'
+            });
+          }
+        }
 
         const newTenant = {
             ...restOfFormData,
             tenantName: combinedName,
             ...(_id ? { _id } : {}),
-            products: productCategory === "Other" ? otherProductDetails : productCategory,
+            products: productCategory === "other" ? otherProductDetails : productCategory,
             rentAmount,
             utilityAmount: parseFloat(utilityAmount),
             totalAmount,
+            feeBreakdown: JSON.stringify(feeBreakdown),
             StartDateTime: formatForTable(startDate), 
             DueDateTime: formatForTable(dueDate),    
             status: "Paid", 
-            documents: processedDocuments
+            documents: processedDocs 
         };
 
         await onSave(newTenant);
@@ -284,7 +308,6 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
   const getFileStatus = (file) => {
       if (!file) return "Click to upload";
       if (typeof file === 'string') {
-          if (file.startsWith('data:')) return "Ready to upload";
           return "Attached";
       }
       return file.name; 
@@ -397,32 +420,81 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
                         </div>
             
                         <div className="bg-slate-50 p-6 rounded-xl border border-slate-200 overflow-y-auto flex-1">
-                            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4">
-                            {Array.from({ length: 30 }).map((_, i) => {
-                                let slotLabel = formData.tenantType === "Permanent" ? `A-${101 + i}` : `NM-${(i + 1).toString().padStart(2, '0')}`;
-                                const tenant = tenants.find(r => 
-                                    (r.slotNo === slotLabel || r.slotno === slotLabel || (r.slotNo && r.slotNo.includes(slotLabel))) 
-                                    && (r.tenantType === formData.tenantType)
-                                    && r.status !== "Available" 
-                                );
-                                const isSelected = tempSelectedSlots.includes(slotLabel);
-                                let statusColor = "bg-white border-2 border-dashed border-slate-300 text-slate-400 hover:border-emerald-500 hover:text-emerald-500";
-                                let statusText = "Available";
-                                if (tenant) {
-                                    statusText = tenant.tenantName || tenant.name;
-                                    statusColor = "bg-slate-200 text-slate-500 border-transparent opacity-60 cursor-not-allowed";
-                                } else if (isSelected) {
-                                    statusColor = "bg-blue-500 text-white border-2 border-blue-600 shadow-md transform scale-105";
-                                    statusText = "Selected";
-                                }
-                                return (
-                                <div key={slotLabel} onClick={() => handleToggleSlot(slotLabel, tenant)} className={`aspect-square rounded-xl flex flex-col items-center justify-center p-2 cursor-pointer transition-all duration-200 ${statusColor}`}>
-                                    <span className="text-lg font-bold opacity-90">{slotLabel}</span>
-                                    <span className="text-[10px] text-center truncate w-full px-1 leading-tight mt-1">{statusText}</span>
-                                </div>
-                                );
-                            })}
-                            </div>
+                           
+                            {(() => {
+                             
+                              const renderSlotBox = (slotLabel) => {
+                                  const tenant = tenants.find(r => 
+                                      (r.slotNo === slotLabel || r.slotno === slotLabel || (r.slotNo && r.slotNo.includes(slotLabel))) 
+                                      && (r.tenantType === formData.tenantType)
+                                      && r.status !== "Available" 
+                                  );
+                                  const isSelected = tempSelectedSlots.includes(slotLabel);
+                                  
+                                  let statusColor = "bg-white border-2 border-dashed border-slate-300 text-slate-400 hover:border-emerald-500 hover:text-emerald-500";
+                                  let statusText = "Available";
+                                  
+                                  if (tenant) {
+                                      statusText = tenant.tenantName || tenant.name;
+                                      statusColor = "bg-slate-200 text-slate-500 border-transparent opacity-60 cursor-not-allowed";
+                                  } else if (isSelected) {
+                                      statusColor = "bg-blue-500 text-white border-2 border-blue-600 shadow-md transform scale-105";
+                                      statusText = "Selected";
+                                  }
+
+                                  const isNightMarket = formData.tenantType === "Night Market";
+                                  const baseClasses = isNightMarket 
+                                      ? "w-14 h-14 flex-shrink-0 rounded-lg flex flex-col items-center justify-center p-1 cursor-pointer transition-all duration-200"
+                                      : "aspect-square rounded-xl flex flex-col items-center justify-center p-2 cursor-pointer transition-all duration-200";
+                                  
+                                  const displayLabel = isNightMarket ? slotLabel.replace('NM-', '') : slotLabel;
+
+                                  return (
+                                      <div key={slotLabel} onClick={() => handleToggleSlot(slotLabel, tenant)} className={`${baseClasses} ${statusColor}`} title={`${slotLabel} - ${statusText}`}>
+                                          <span className={`${isNightMarket ? 'text-sm' : 'text-lg'} font-bold opacity-90`}>{displayLabel}</span>
+                                          <span className="text-[10px] text-center truncate w-full px-1 leading-tight mt-1">{statusText}</span>
+                                      </div>
+                                  );
+                              };
+
+                             
+                              if (formData.tenantType === "Permanent") {
+                                  return (
+                                      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-4">
+                                          {Array.from({ length: 30 }).map((_, i) => renderSlotBox(`A-${101 + i}`))}
+                                      </div>
+                                  );
+                              } else {
+                                 
+                                  return (
+                                      <div ref={scrollRef} className="overflow-x-auto pb-4 custom-scrollbar">
+                                          <div className="min-w-max flex flex-col items-start bg-slate-200/50 p-4 rounded-xl border border-slate-200">
+                                           
+                                              <div className="flex flex-row items-center mb-10">
+                                                  <div className="flex flex-row gap-1">{[32, 31, 30, 29, 28, 27, 26].map(num => renderSlotBox(`NM-${num.toString().padStart(2, '0')}`))}</div>
+                                                  <div className="w-8 flex-shrink-0"></div>
+                                                  <div className="flex flex-row gap-1">{[25, 24, 23, 22, 21, 20, 19, 18].map(num => renderSlotBox(`NM-${num.toString().padStart(2, '0')}`))}</div>
+                                                  <div className="w-10 flex-shrink-0"></div>
+                                                  <div className="flex flex-row gap-1">{[17, 16, 15, 14, 12, 11, 10, 9].map(num => renderSlotBox(`NM-${num.toString().padStart(2, '0')}`))}</div>
+                                                  <div className="w-8 flex-shrink-0"></div>
+                                                  <div className="flex flex-row gap-1">{[8, 7, 6, 5, 4, 3, 2, 1].map(num => renderSlotBox(`NM-${num.toString().padStart(2, '0')}`))}</div>
+                                              </div>
+                                             
+                                              <div className="flex flex-row items-center">
+                                                  <div className="flex flex-row gap-1">{[33, 34, 35, 36, 37, 38, 39].map(num => renderSlotBox(`NM-${num.toString().padStart(2, '0')}`))}</div>
+                                                  <div className="w-8 flex-shrink-0"></div>
+                                                  <div className="flex flex-row gap-1">{[40, 41, 42, 43, 44, 45, 46, 47].map(num => renderSlotBox(`NM-${num.toString().padStart(2, '0')}`))}</div>
+                                                  <div className="w-10 flex-shrink-0"></div>
+                                                  <div className="flex flex-row gap-1">{[48, 49, 50, 51, 53, 54, 55, 56].map(num => renderSlotBox(`NM-${num.toString().padStart(2, '0')}`))}</div>
+                                                  <div className="w-8 flex-shrink-0"></div>
+                                                  <div className="flex flex-row gap-1">{[57, 58, 59, 60, 61, 62, 63, 64].map(num => renderSlotBox(`NM-${num.toString().padStart(2, '0')}`))}</div>
+                                              </div>
+                                          </div>
+                                      </div>
+                                  );
+                              }
+                            })()}
+                           
                         </div>
 
                         <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end gap-3">
@@ -435,22 +507,27 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
                     </div>
                 )}
                
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 md:col-span-2">
-                    <div className="flex flex-col gap-1">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 md:col-span-2">
+                  <div className="flex flex-col gap-1">
                     <label className="text-xs font-semibold text-slate-600">First Name</label>
                     <input type="text" required className="p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" 
-                        value={formData.firstName} onChange={(e) => setFormData({...formData, firstName: e.target.value})} />
-                    </div>
-                    <div className="flex flex-col gap-1">
+                      value={formData.firstName} onChange={(e) => setFormData({...formData, firstName: e.target.value})} />
+                  </div>
+                  <div className="flex flex-col gap-1">
                     <label className="text-xs font-semibold text-slate-600">Middle Name</label>
                     <input type="text" className="p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" 
-                        value={formData.middleName} onChange={(e) => setFormData({...formData, middleName: e.target.value})} />
-                    </div>
-                    <div className="flex flex-col gap-1">
+                      value={formData.middleName} onChange={(e) => setFormData({...formData, middleName: e.target.value})} />
+                  </div>
+                  <div className="flex flex-col gap-1">
                     <label className="text-xs font-semibold text-slate-600">Last Name</label>
                     <input type="text" required className="p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" 
-                        value={formData.lastName} onChange={(e) => setFormData({...formData, lastName: e.target.value})} />
-                    </div>
+                      value={formData.lastName} onChange={(e) => setFormData({...formData, lastName: e.target.value})} />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-semibold text-slate-600">Suffix</label>
+                    <input type="text" placeholder="Jr, Sr, etc." className="p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" 
+                      value={formData.suffix} onChange={(e) => setFormData({...formData, suffix: e.target.value})} />
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-1">
@@ -470,12 +547,16 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-semibold text-slate-600">Category</label>
                   <select className="p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" value={productCategory} onChange={(e) => setProductCategory(e.target.value)}>
-                    <option value="Food and Beverages">Food and Beverages</option>
-                    <option value="Clothing">Clothing</option>
-                    <option value="Other">Other (Please specify)</option>
+                    <option value="food_non_alcoholic">Food and non-alcoholic beverages</option>
+                    <option value="clothes_textiles">Clothes and textiles</option>
+                    <option value="accessories">Accessories</option>
+                    <option value="footwears">Footwears</option>
+                    <option value="kitchenwares">Kitchenwares</option>
+                    <option value="agricultural_produce">Fruits, vegetables and other agricultural produce</option>
+                    <option value="other">Others, please specify</option>
                   </select>
                 </div>
-                {productCategory === "Other" && (
+                {productCategory === "other" && (
                   <div className="flex flex-col gap-1 animate-fadeIn">
                     <label className="text-xs font-semibold text-slate-600">Specify Product</label>
                     <input type="text" required placeholder="Enter product details..." className="p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" value={otherProductDetails} onChange={(e) => setOtherProductDetails(e.target.value)} />
@@ -499,15 +580,47 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
             </section>
 
             <section className="pt-4 border-t border-slate-100">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-600 mb-4 flex items-center gap-2"><PhilippinePeso size={16} /> 4. Financial Setup</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-600 mb-4 flex items-center gap-2"><PhilippinePeso size={16} /> 4. Financial Breakdown</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-slate-600">Rent (x{formData.slotNo ? formData.slotNo.split(',').length : 1} Slots)</label>
+                  <label className="text-xs font-semibold text-slate-600">Rental Fee (x{formData.slotNo ? formData.slotNo.split(',').length : 1})</label>
                   <div className="relative"><span className="absolute left-3 top-2.5 text-slate-500">₱</span><input type="number" readOnly className="pl-8 p-2.5 w-full rounded-lg border border-slate-200 bg-slate-50 font-semibold text-slate-700" value={rentAmount} /></div>
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-slate-600">Utility Fee</label>
-                  <div className="relative"><span className="absolute left-3 top-2.5 text-slate-500">₱</span><input className="pl-8 p-2.5 w-full rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" value={utilityAmount} onChange={(e) => setUtilityAmount(e.target.value)} /></div>
+                  <label className="text-xs font-semibold text-slate-600">Garbage Fee</label>
+                  <div className="relative"><span className="absolute left-3 top-2.5 text-slate-500">₱</span><input type="number" className="pl-8 p-2.5 w-full rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" value={feeBreakdown.garbageFee} onChange={(e) => setFeeBreakdown({...feeBreakdown, garbageFee: e.target.value})} /></div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-slate-600">Permit Fee</label>
+                  <div className="relative"><span className="absolute left-3 top-2.5 text-slate-500">₱</span><input type="number" className="pl-8 p-2.5 w-full rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" value={feeBreakdown.permitFee} onChange={(e) => setFeeBreakdown({...feeBreakdown, permitFee: e.target.value})} /></div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-slate-600">Business Taxes</label>
+                  <div className="relative"><span className="absolute left-3 top-2.5 text-slate-500">₱</span><input type="number" className="pl-8 p-2.5 w-full rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" value={feeBreakdown.businessTaxes} onChange={(e) => setFeeBreakdown({...feeBreakdown, businessTaxes: e.target.value})} /></div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-slate-600">Electricity</label>
+                  <div className="relative"><span className="absolute left-3 top-2.5 text-slate-500">₱</span><input type="number" className="pl-8 p-2.5 w-full rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" value={feeBreakdown.electricity} onChange={(e) => setFeeBreakdown({...feeBreakdown, electricity: e.target.value})} /></div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-slate-600">Water</label>
+                  <div className="relative"><span className="absolute left-3 top-2.5 text-slate-500">₱</span><input type="number" className="pl-8 p-2.5 w-full rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" value={feeBreakdown.water} onChange={(e) => setFeeBreakdown({...feeBreakdown, water: e.target.value})} /></div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-slate-600">Others (Amount)</label>
+                  <div className="relative"><span className="absolute left-3 top-2.5 text-slate-500">₱</span><input type="number" className="pl-8 p-2.5 w-full rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" value={feeBreakdown.otherAmount} onChange={(e) => setFeeBreakdown({...feeBreakdown, otherAmount: e.target.value})} /></div>
+                </div>
+                <div className="flex flex-col gap-1 md:col-span-2">
+                  <label className="text-xs font-semibold text-slate-600">Others (Please specify)</label>
+                  <input type="text" className="p-2.5 w-full rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Specify what the other fee is for..." value={feeBreakdown.otherSpecify} onChange={(e) => setFeeBreakdown({...feeBreakdown, otherSpecify: e.target.value})} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-slate-100">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-slate-600">Total Additional Fees</label>
+                  <div className="relative"><span className="absolute left-3 top-2.5 text-slate-500">₱</span><input type="number" readOnly className="pl-8 p-2.5 w-full rounded-lg border border-slate-200 bg-slate-50 font-semibold text-slate-700" value={utilityAmount} /></div>
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-semibold text-slate-600">Total Amount Due</label>
@@ -532,6 +645,9 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
 
                   if (formData.tenantType === "Permanent") {
                     docFields.push({ label: 'Signed Contract', key: 'contract' });
+                  } else if (formData.tenantType === "Night Market") {
+                    docFields.push({ label: 'Community Tax', key: 'communityTax' });
+                    docFields.push({ label: 'Police Clearance', key: 'policeClearance' });
                   }
 
                   return docFields.map(({ label, key }) => {
@@ -546,10 +662,19 @@ const AddTenantModal = ({ isOpen, onClose, onSave, tenants = [], initialData = n
                                 type="button" 
                                 onClick={(e) => {
                                     e.preventDefault(); 
-                                    setPreviewImage(currentFile);
+                                    
+                                    const fileUrl = currentFile.startsWith('http') || currentFile.startsWith('data:') 
+                                      ? currentFile 
+                                      : `${import.meta.env.VITE_API_URL}/api/stalls/doc/${currentFile}`;
+                                      
+                                    if (currentFile.toLowerCase().endsWith('.pdf')) {
+                                        window.open(fileUrl, '_blank', 'noopener,noreferrer');
+                                    } else {
+                                        setPreviewImage(fileUrl);
+                                    }
                                 }} 
                                 className="bg-white text-emerald-600 p-1.5 rounded-full shadow border border-emerald-100 hover:bg-emerald-600 hover:text-white transition-all"
-                                title="View Image"
+                                title="View Document"
                             >
                                 <ZoomIn size={16} />
                             </button>
